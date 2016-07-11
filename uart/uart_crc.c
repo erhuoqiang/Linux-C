@@ -39,7 +39,11 @@ typedef signed int INT16;
 #define TRUE 0
 
 /*define the device port*/
+#if 0
 #define DEV_PORT "/dev/pts/4"
+#else
+#define DEV_PORT "/dev/ttyS0"
+#endif 
 
 /*数据属性初始化值*/
 #define PROPERTY_INIT 0x11
@@ -1458,4 +1462,6 @@ U8 tsk_thread_delete(void)
 
 int main()
 {
+    INT8  port_fd = 0;
+    port_fd = open_port();
 }
