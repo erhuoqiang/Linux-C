@@ -18,7 +18,9 @@ typedef unsigned long U32;
 typedef signed char INT8;
 typedef unsigned int UINT16;
 typedef signed int INT16;
-
+ 
+/*用于决定是否运行调试代码*/
+#define DEBUG 1  
 
 #define FALSE -1
 #define TRUE 0
@@ -222,7 +224,9 @@ U8 escape_character(U8 *package_data_ptr, U8 data_length, U8 *buffer)
 
 	return TRUE;
 }
-
+/*反转义 HEAD<-ESC 0X01 TAIL<-ESC 0X03 ESC<-ESC 0X02
+将未转义的数据包转义给package_data_ptr  data_length这里没有效果可忽略
+这里加上是为了以后需要对没有HEAD和TAIL标识符的数据进行反转义*/
 U8 anti_escape_character(U8 *buffer_ptr, U8 *package_data_ptr,  U8 data_length)  
 {  
     if ((NULL == package_data_ptr) || (0 == data_length) || (*buffer_ptr != HEAD))  
@@ -257,7 +261,7 @@ U8 anti_escape_character(U8 *buffer_ptr, U8 *package_data_ptr,  U8 data_length)
             }  
             else 
             {  
-                *package_data_ptr++ =  *buffer_ptr++;  //如果不是前面三种情况则说明传输过程中该位或者后一位出现的错误
+                *package_data_ptr++ =  ESC;  //如果不是前面三种情况则说明传输过程中该位或者后一位出现的错误
 									     //则可以选择对错误位操作 可以用全局变量来通知或者进一步操作
                 *package_data_ptr++ = *buffer_ptr;    //这里是收下这两个可能出错的位数
             }  
@@ -269,8 +273,8 @@ U8 anti_escape_character(U8 *buffer_ptr, U8 *package_data_ptr,  U8 data_length)
         }/*end if*/  
   
     }/*end while*/  
-  
-    return TRUE;  
+    *package_data_ptr = TAIL;
+    return TRUE;   
 }  
 
 /*打开串口号 将其设置为堵塞状态*/
@@ -318,7 +322,8 @@ U8 close_port(INT8 port_fd)
 /*define the flag to cancel the thread*/  
 U8 g_exit_flag = 0;  
  
-
+/*用于描述mes_que结构体的msg_type*/   
+#define MSG_TYPE 17  
 typedef struct  
 {  
     INT8 msg_type;  
@@ -351,8 +356,7 @@ typedef struct
 #define PROPERTY_OTHER 0x155
  
 #define MSG_QUE_KEY 1024  
-/*define the struct of the mes_que*/  
-#define MSG_TYPE 17  
+
  
 /*消息列队接收一帧接受解析的数据msg_que类型，并执行数据对应指令*/
 void  *tsk_run(INT8 *param_ptr)  
@@ -455,7 +459,7 @@ void  *tsk_run(INT8 *param_ptr)
         U16 property = 0;  
         property = package_data_ptr[4];  
         property = property << 8;  
-        property = (property | package_data_ptr[3]);  
+        property = (property | package_data_ptr[3]);   
 #if DEBUG  
         printf("property is:%04x\n", property);  
 #endif  
@@ -637,4 +641,147 @@ void  *tsk_run(INT8 *param_ptr)
                    }  
         }/*end switch*/  
     }/*end ehile*/  
+}  
+
+
+
+
+/*将 data_recv接受到的的数据包根据HEAD和TAIL格式分组，如果数据包的数据包含3.5组
+，则将前三组反转义，然后CRC校验（对数据帧去HEAD和TAIL后校验），最后根据数据
+和长度构成mes_que结构体传递给消息列队在tsk_run中进一步处理。剩下的0.5则返回
+0.5组HEAD的位置给data_rev，下次接受完整后在传入处理。
+参数：data_proc_ptr是数据包首地址，data_start_pos 从数据包的这个位置开始处理，
+data_end_pos代表数据结束为止*/
+U8 data_process(U8 *data_proc_ptr,  U8 data_start_pos, U8 data_end_pos)  
+{  
+    if ((NULL == data_proc_ptr) || (data_start_pos >= data_end_pos))  
+    {  
+        printf("input data error!\n");  
+        return 0;  
+    }  
+  
+    /*use msg_que to do the ipc*/  
+    msg_que msg_que_info;  
+    INT8 ret = 0;  
+    INT16 msg_que_id;  
+    memset(&msg_que_info, 0, sizeof(msg_que_info));  
+    msg_que_id = msgget((key_t)MSG_QUE_KEY, IPC_EXCL);  
+#if DEBUG  
+    printf("the msg_que_id is:%4d\n", msg_que_id);  
+#endif  
+  
+  /*buffer用于存放一帧数据反转义前的内容，考虑到除了HEAD和TAIL，其他数据都被转义
+   成2个字符的可能所以长度是(DATA_LENGTH_MAX + PROTOCAL_LENGTH) * 2  - 2*/  
+    U8 buffer[(DATA_LENGTH_MAX + PROTOCAL_LENGTH) * 2  - 2] = {0};  
+    /*package_data用来存放反转义后的数据，DATA_LENGTH_MAX + PROTOCAL_LENGTH
+	大小足够   但是由于担心传输过程中有数据出错，2个转义字符并没有变成1个，所以就多申请了一倍*/
+    U8 package_data[(DATA_LENGTH_MAX + PROTOCAL_LENGTH) * 2] = {0};  
+  
+  
+    U8 head_flag = 0;  
+    U8 tail_flag = 0;  
+    U8 pos = 0;  
+    U8 package_data_length = 0;  
+   /*从data_start_pos到data_end_pos可能有很多组*/
+    for (; data_start_pos < data_end_pos; data_start_pos++)  
+    {  
+        /*根绝HEAD和TAIL 得到一帧数据的开始和结束位置*/  
+        if ((HEAD == data_proc_ptr[data_start_pos])  
+                && (0 == head_flag))  
+        {  
+            head_flag = 1;  
+            pos = data_start_pos;  
+            continue;  
+        }  
+        /*avoid the double head or triple head*/  
+        if ((HEAD == data_proc_ptr[data_start_pos])  
+                && (1 == head_flag))  
+        {  
+            pos = data_start_pos;  
+        }  
+  
+        if ((TAIL == data_proc_ptr[data_start_pos])  
+                && (0 == tail_flag))  
+        {  
+            if(1 == head_flag)  
+            {  
+                tail_flag = 1;  
+            }  
+            else  
+            {  
+                tail_flag = 0;  
+            }  
+        }     
+          
+        /*head_flag 和 tail_flag为1则代表接受完一帧数据*/  
+        if ((1 == head_flag) && (1 == tail_flag))  
+        {  
+            printf("data_start_pos is %2d, pos is %2d ", data_start_pos, pos);  
+            memset(buffer, 0x00, (DATA_LENGTH_MAX + PROTOCAL_LENGTH) * 2 - 2);  
+	       /*将数据帧拷贝给buffer*/     
+	    memcpy(buffer, &data_proc_ptr[pos],    (data_start_pos - pos + 1));  
+  
+            /*anti escape character*/  
+            printf("\nanti escape character! data_start_pos is %4d pos is %4d\n",  
+                    data_start_pos, pos);  
+            memset(package_data, 0x00, (DATA_LENGTH_MAX + PROTOCAL_LENGTH) * 2);  
+            /*buffer反转义后的数据给package_data*/
+	    anti_escape_character(buffer, package_data,  (data_start_pos - pos + 1));  
+  
+            /*data length exclude head and tail*/  
+#if DEBUG  
+            printf("data length is: package[3] = %2d\n", package_data[3] - 2);  
+#endif  
+	    /*数据帧的第4个字节是长度*/
+            package_data_length = package_data[3] - 2;  
+		/*CRC校验不包括HEAD和TAIL*/
+            printf("crc16_check is 0x%04x\n",  
+                    crc16_check(&package_data[1], package_data_length));  
+            if (0x00 == crc16_check(&package_data[1], package_data_length))  
+            {  
+                printf("crc16_check success!\n");  
+            }  
+            else  
+            {  
+                printf("crc16_ check error!\n");  
+                /* 
+                 * theoretically,it will return the serial_num 
+                 * and the sub_package_ID  
+                 */  
+                return 0;  
+            }  
+            /*将不包括HEAD和TAIL的的数据包给msg_que_info.buf msg_type消
+		息类型成员在程序中并没有什么作用 因为数据的类型标志放在了串口
+		结构体中的属性中，不过可以用来以后根据需求扩充		*/  
+            msg_que_info.msg_type = MSG_TYPE;  
+            msg_que_info.msg_len = package_data_length;  
+#if DEBUG  
+            printf("msg_que_info.msg_len is %4d\n",   
+                    msg_que_info.msg_len);  
+#endif  
+            memcpy(&(msg_que_info.msg_buf), &package_data[1],  
+                    package_data_length);  
+            /*将msg_que结构体传递给消息列队 在tsk_run中处理*/  
+            ret = msgsnd(msg_que_id, &msg_que_info, package_data_length, IPC_NOWAIT);  
+            if (ret < 0)  
+            {  
+                printf("msg send failed!\n");  
+                return 0;  
+            }  
+            else   
+            {  
+                printf("send msg success! ret is %4d\n", ret);  
+                sleep(2);  
+            }  
+              
+            head_flag = 0;  
+            tail_flag = 0;  
+            pos = 0;  
+        }  
+    }  
+#if 0  
+    printf("\nreturn data is: %4d\n", pos);  
+#endif  
+   /*如果存在0.5组这类情况这这里返回0.5组的起始位置，否则返回0*/
+    return pos;  
 }  
