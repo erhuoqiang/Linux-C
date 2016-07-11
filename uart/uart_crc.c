@@ -12,6 +12,9 @@
 #include<sys/ipc.h>
 #include<sys/msg.h>
 
+/*发送调用的函数：1 data_Send() 	2 data_package();    3 crc16_check()  4 escape_character()   
+   接受调用的函数: 1 data_Rev()	2 data_process() 	3 anti_escape_character 4 crc16_check() 5 tsk_run*/
+
 typedef unsigned char U8;
 typedef unsigned short U16;
 typedef unsigned long U32;
