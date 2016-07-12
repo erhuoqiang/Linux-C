@@ -12,18 +12,19 @@
 #include<sys/ipc.h>
 #include<sys/msg.h>
 
-/*发送调用的函数：
+/*发送功能需要调用的函数：
  1 data_Send()
  2 data_package();
  3 crc16_check()
  4 escape_character()
 
-接受调用的函数:
+接收功能需要调用的函数:
    1 data_Rev()
    2 data_process()
    3 anti_escape_character
    4 crc16_check()
-   5 tsk_run*/
+   5 tsk_run
+   */
 
 typedef unsigned char U8;
 typedef unsigned short U16;
@@ -34,6 +35,7 @@ typedef signed int INT16;
 
 /*用于决定是否运行调试代码*/
 //#define DEBUG 1
+
 
 #define FALSE -1
 #define TRUE 0
@@ -59,7 +61,8 @@ typedef signed int INT16;
 #define BUFFER_SIZE 72
 #define BAUDRATE 115200
 
-/*控制tsk_run和data_rev    while循环的运行当接受到数据exit字符串则为1，两函数退出循环*/
+/*控制tsk_run和data_rev   可以理解为对数据接受和处理的使能端  while循环
+的运行当接受到数据exit字符串则为1，两函数退出循环*/
 volatile U8 g_exit_flag = 0;
 
 /*用于描述mes_que结构体的msg_type*/
@@ -132,7 +135,7 @@ void scom_protocal_init(scom_protocal *protocal_info_ptr)
 	protocal_info_ptr->serial_num = 0x0000;
 	/*init length is data_length + PROTOCAL_LENGTH*/
 	protocal_info_ptr->length[0] = PROTOCAL_LENGTH + DATA_LENGTH_MAX;
-	protocal_info_ptr->property = PROPERTY_INIT;
+	protocal_info_ptr->property = PROPERTY_INIT;  //如果需要发送其他属性的文件则修改这里
 
 	memset(protocal_info_ptr->package_data, 0, sizeof(U8) * DATA_LENGTH_MAX);
 
@@ -225,26 +228,28 @@ U8 serialport_init(INT8 port_fd, U32 baud_rate,   U8 data_bits, U8 parity, U8 st
     return 0;
 }
 
-/*CRC校验函数
+/*CRC校验函数 根据自己原本写的改进crc赋初始值是为了考虑开头数据多了00
+并不影响CRC生成校验值的结果这种情况，提高效率的地方是	crc = crc ^ (*addr++ << 8);
+这里是根据^位与同组值异或的顺序不同不影响结果的原理写的
 参数：addr是数据数组首地址，num是数据长度，crc是crc的初始值*/
 #define CRC_INIT   0xffff
 #define POLY 0x1021 // 这里省略了一个1 相当于多项式为0x11021
 int crc16_check(unsigned char *addr, int num,int crc)
 {
 	int i;
-	for (; num > 0; num--) /* Step through bytes in memory */
+	for (; num > 0; num--)
 	{
-		crc = crc ^ (*addr++ << 8); /* Fetch byte from memory, XOR into CRC top byte*/
-		for (i = 0; i < 8; i++) /* Prepare to rotate 8 bits */
+		crc = crc ^ (*addr++ << 8);
+		for (i = 0; i < 8; i++)
 		{
-			if (crc & 0x8000) /* b15 is set... */
-				crc = (crc << 1) ^ POLY; /* rotate and XOR with polynomic */
-			else /* b15 is clear... */
-				crc <<= 1; /* just rotate */
-		} /* Loop for 8 bits */
-		crc &= 0xFFFF; /* Ensure CRC remains 16-bit value */
-	} /* Loop until num=0 */
-	return(crc); /* Return updated CRC */
+			if (crc & 0x8000)
+				crc = (crc << 1) ^ POLY;
+			else
+				crc <<= 1;
+		}
+		crc &= 0xFFFF;
+	}
+	return(crc);
 }
 
 /*避免数据中出现和HEAD,TAIL和转义字符标志字段同ASCII码的 采用字节填充的方法
@@ -386,7 +391,9 @@ U8 close_port(INT8 port_fd)
 
 
 
-/*消息列队接收一帧接受解析的数据msg_que类型，并执行数据对应指令 参数为对应的串口端口*/
+/*消息列队接收一帧接受解析的数据msg_que类型， 判断接受的数据包是否是子包如果是则接受所有子包整和成
+一个数据包，然后进一步处理 如果不是子包则直接处理，处理根据数据包属性来决定具体的处理方式
+ 参数为对应的串口端口*/
 void  *tsk_run(INT8 *param_ptr)
 {
     INT8 port_fd = *param_ptr;
@@ -540,12 +547,13 @@ void  *tsk_run(INT8 *param_ptr)
         *(data_ptr+package_data_ptr[2] - PROTOCAL_LENGTH) = 0;
 	/*获取0-9位的属性*/
         property &= 0x3ff;
+    /*根据接受数据的属性不同做不同的处理*/
         switch (property)
         {
             case PROPERTY_INIT:
                    {
                        printf("The receive cmd is linux system cmd:%s\n", data_ptr);
-
+                    /*输入数据如果是"exit"则g_Exit_flag = 1,否则执行命令*/
                        if (0 == strcmp(exit_ptr, data_ptr))
                        {
                            g_exit_flag = 1;
@@ -822,22 +830,11 @@ U8 data_process(U8 *data_proc_ptr,  U8 data_start_pos, U8 data_end_pos)
 }
 
 
-/*************************************************
- * Function: data_package()
- * Description: package the data with the scom_protocal
- * Calls:
- * Called By: data_send
- * Input: protocal_info_ptr, package_data, data_length
- * Output:
- * Return: TRUE/FALSE
- * Author: xhniu
- * History: <author> <date>  <desc>
- * Others: none
-*************************************************/
-U8 data_package(scom_protocal *protocal_info_ptr,
-        U8 *package_data_ptr, U8 data_length)
+/*将要发送的scom_protocal格式的数据包的格式和数据有效长度拷贝给package_data_ptr
+参数 将protocal_info_ptr格式拷贝到pack_age_data_ptr，数据长度由data_length提供*/
+U8 data_package(scom_protocal *protocal_info_ptr,U8 *package_data_ptr, U8 data_length)
 {
-    /*decide whether need subpackage*/
+    /*判断数据长度是否超过格式允许的最大值*/
     if (data_length > DATA_LENGTH_MAX)
     {
         printf("input valid!!!\n");
@@ -846,33 +843,26 @@ U8 data_package(scom_protocal *protocal_info_ptr,
 
     U8 len = 0;
 
-    package_data_ptr[0] = protocal_info_ptr->head[0];
-    /*U16 to U8 low 8 bit*/
-    package_data_ptr[1] = (U8)(protocal_info_ptr->serial_num);
-    package_data_ptr[2] = (U8)((protocal_info_ptr->serial_num)
-            >> 8);
+    package_data_ptr[0] = protocal_info_ptr->head[0];   //帧头
 
-    package_data_ptr[3] = data_length + PROTOCAL_LENGTH;
+    package_data_ptr[1] = (U8)(protocal_info_ptr->serial_num); //流水号
+    package_data_ptr[2] = (U8)((protocal_info_ptr->serial_num)>> 8);
 
-    /*U16 to U8 low 8 bit*/
-    package_data_ptr[4] = (U8)(protocal_info_ptr->property);
-    /*high 8 bit*/
-    package_data_ptr[5] = (U8)((protocal_info_ptr->property)
-            >> 8);
+    package_data_ptr[3] = data_length + PROTOCAL_LENGTH;   //数据有效长度
 
+    package_data_ptr[4] = (U8)(protocal_info_ptr->property); //数据属性
+    package_data_ptr[5] = (U8)((protocal_info_ptr->property)>> 8);
+
+/*有效长度的数据*/
     for (; len < data_length; len++)
     {
         package_data_ptr[len + 6] =
             protocal_info_ptr->package_data[len];
     }
-    /*
-     *generate the CRC16 check data
-     * U16 to U8
-     */
+    /*存放CRC校验得出来的结果FSC*/
     U16 check_code;
-    /*data_length + property(2 byte) + length(1 byte) +
-     * serial_num(2 byte)
-     */
+    /*参与校验的长度 = data_length + serial_num(2 byte) + length(1 byte) +property(2 byte) = data_lenth +5
+        帧头和帧尾不参与校验得出的CRC值存放在数据包的校验码成员上*/
     U8 *ptr = malloc(sizeof(U8) * (data_length + 5));
     memcpy(ptr, package_data_ptr + 1, data_length + 5);
     check_code = crc16_check(ptr, data_length + 5,CRC_INIT);
@@ -894,6 +884,8 @@ U8 data_package(scom_protocal *protocal_info_ptr,
 
     return TRUE;
 }
+
+/*发送数据包 并判断是否需要分包*/
 U8 data_send(INT8 port_fd, scom_protocal *protocal_info_ptr,U8 *data_send_ptr, U8 data_send_length)
 {
     if (NULL == data_send_ptr)
@@ -1350,7 +1342,10 @@ void *data_recv(recv_param *data_recv_info_ptr)
             }
             else
             {
-                /*//这里可以改成data_Start_pos = 0; pos = 0;当完整接受后可以从头接受数据减少进入BUFFER_SIZE == pos的IF中*/
+                /*这里可以改成data_Start_pos = 0; pos = 0;当完整接受后可以从头接受数据减少进入BUFFER_SIZE == pos的IF中*/
+                //data_start_pos = pos = 0;
+                /*这里是如果数据刚分成整数组则将下次从pos也就是当前数据包末尾位置开始
+               接收，不采用上一种方法是因为调试的时候这样方便统计和查看接受数据的个数*/
                 data_start_pos = pos;
             }
             printf("data_proc_pos is %3d\n", data_proc_pos);
@@ -1491,14 +1486,19 @@ int main()
     serialport_init(port_fd, 115200,8,'N', 1);//设置设备串口属性波特率停止位 数据位 校验位
     scom_protocal_init(&scom);  //  初始化串口协议结构体
     rev_data.port_fd = port_fd;
-    MSG_QUE_KEY = ftok("./",5);
+
+    MSG_QUE_KEY = ftok("./",5); // MSG_QUE_KEY是全局变量
+
     tsk_thread_create((void *(*)(void *))data_recv, (void *)&rev_data);
-     tsk_thread_create((void *(*)(void *))tsk_run, (void *)&port_fd);
-    while(1)
+    tsk_thread_create((void *(*)(void *))tsk_run, (void *)&port_fd);
+    while(!g_exit_flag )
     {
         printf("input command:\n");
         fgets(data, sizeof(data), stdin);
         /*因为fgets读取会将最后的换行符也读入所以my_strlen(data) - 1*/
         data_send(port_fd,&scom,data,my_strlen(data)-1);
     }
+    close_port(port_fd);
+    tsk_thread_delete();
 }
+/*测试的时候只需要用一个USB转串口接电脑USB0，然后USB转串口TX和RX相连*/
