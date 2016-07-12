@@ -43,7 +43,7 @@ typedef signed int INT16;
 #define DEV_PORT "/dev/pts/4"
 #else
 #define DEV_PORT "/dev/ttyS0"
-#endif 
+#endif
 
 /*数据属性初始化值*/
 #define PROPERTY_INIT 0x11
@@ -1460,8 +1460,23 @@ U8 tsk_thread_delete(void)
     }/*end if*/
 }
 
+int my_strlen(const char *src)
+{
+    const  char  * temp  = src;
+    if(src == NULL)
+        return -1;
+    while(*src++);
+    return src  -  temp  - 1;
+}
 int main()
 {
+    char data[72] = "";
+    scom_protocal scom; //定义协议结构
     INT8  port_fd = 0;
-    port_fd = open_port();
+    port_fd = open_port();//串口设备的文件描述符
+    serialport_init(port_fd, 115200,8,'N', 1);//设置设备串口属性波特率停止位 数据位 校验位
+    scom_protocal_init(&scom);  //  初始化串口协议结构体
+    printf("input command:\n");
+    fgets(data, sizeof(data), stdin);
+    data_send(port_fd,&scom,data,my_strlen(data));
 }
