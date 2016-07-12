@@ -56,9 +56,11 @@ typedef signed int INT16;
 #define PROPERTY_0x05 0x151
 #define PROPERTY_OTHER 0x155
 
+/*一次传输数据的最大长度   因为scom_protocal中length只分配一个字节 所以最大长度为255 这里改了缓存区BUFFER_SIZE
+也要改 一般为DATA_LENGTH_MAX 9倍*/
 #define DATA_LENGTH_MAX 8
-#define PROTOCAL_LENGTH 9
-#define BUFFER_SIZE 72
+#define PROTOCAL_LENGTH 9  //scom_protocal结构体的除去数据长度后的协议长度
+#define BUFFER_SIZE 72  //接收端的缓存区大小 rev_data的BUF大小
 #define BAUDRATE 115200
 
 /*控制tsk_run和data_rev   可以理解为对数据接受和处理的使能端  while循环
@@ -885,7 +887,10 @@ U8 data_package(scom_protocal *protocal_info_ptr,U8 *package_data_ptr, U8 data_l
     return TRUE;
 }
 
-/*发送数据包 并判断是否需要分包*/
+/*发送数据包 并判断是否需要分包发送，调用data_package()将数据打包成数据包格式，并的到校验码
+然后经过转义后写入对应串口文件
+参数： port_fd 是串口文件的描述符，protocal_info_ptr是要发送的数据包采用的格式
+data_send_ptr是要发送的内容 data_send_length是数据长度*/
 U8 data_send(INT8 port_fd, scom_protocal *protocal_info_ptr,U8 *data_send_ptr, U8 data_send_length)
 {
     if (NULL == data_send_ptr)
@@ -894,52 +899,49 @@ U8 data_send(INT8 port_fd, scom_protocal *protocal_info_ptr,U8 *data_send_ptr, U
         return FALSE;
     }
 
-    /*number of the char need escape*/
+    /*用来统计需要转义字符的个数*/
     U8 num_escape_char = 0;
     U8 num_escape_char_temp = 0;
 
     U8 *package_data = NULL;
     U8 *escape_char_ptr = NULL;
 
-    /*when send new data, the serial num will plus 1*/
+    /*发送新数据流水号加1*/
     (protocal_info_ptr->serial_num)++;
-
+ /*判断是否要分包   当要发送的数据的长度大于 一次格式包允许的最大长度则需要分包*/
     if (data_send_length > DATA_LENGTH_MAX)
     {
-        /*need the subpackage calculate the sun_package_num
-         * set the flag of the subpackage*/
         int sub_package_num = 0, count = 0;
-        if (0 != data_send_length % DATA_LENGTH_MAX)
+    /*    if (0 != data_send_length % DATA_LENGTH_MAX)
         {
             sub_package_num = (data_send_length / DATA_LENGTH_MAX) + 1;
         }
         else
         {
             sub_package_num = (data_send_length / DATA_LENGTH_MAX);
-        }
+        }*/
+        /*这行可以取代上面的if*/
+         sub_package_num = ((data_send_length+ DATA_LENGTH_MAX - 1)/ DATA_LENGTH_MAX);
 
-        /*3 byte of the sub_package_num the data area is
-         *1 ~ 7
-         */
+    /*属性的13-15位如果为0 代表不分包 不为0 代表分包数，因为是3bit所以分包数最多为8，
+        一次最多传输个8个子包， 10-12位表示当前子包的ID号  所以下面分别对这几位赋值*/
         if (sub_package_num > 8)
         {
             return FALSE;
         }
+        /*设置属性13-15位分包数*/
         protocal_info_ptr->property &= 0x1fff;
         protocal_info_ptr->property |= ((sub_package_num - 1) << 13);
 #if DEBUG
         printf("sub_package_num is:%4x\n",sub_package_num);
 #endif
-        /*
-         * sub_package_num - 1
-         * the length of the last sub_package is not sure
-         */
+    /*sub_package_num - 1 原因是比如最后一个子包的长度不一定是位DATA_LENGTH_MAX需要单独处理*/
         for (; count < (sub_package_num - 1); count++)
         {
-            /*set the length of the protcal_info_ptr->length[0]*/
+            /*设置数据包长度*/
             protocal_info_ptr->length[0] =
                 DATA_LENGTH_MAX + PROTOCAL_LENGTH;
-            /*set the ID of the subpackage*/
+            /* 设置属性的10-12位  表示当前子包的ID号*/
             protocal_info_ptr->property &= 0xe3ff;
             protocal_info_ptr->property |= (count << 10);
 
@@ -964,7 +966,7 @@ U8 data_send(INT8 port_fd, scom_protocal *protocal_info_ptr,U8 *data_send_ptr, U
                 printf("malloc failed\n");
                 return FALSE;
             }
-
+           /*将数据按照protocal_info_ptr格式打包 并填写CRC校验码*/
             data_package(protocal_info_ptr, package_data,
                     DATA_LENGTH_MAX);
 #if DEBUG
@@ -982,7 +984,7 @@ U8 data_send(INT8 port_fd, scom_protocal *protocal_info_ptr,U8 *data_send_ptr, U
             num_escape_char_temp = 0;
             /*count the num of the 0xff 0xf4 0x4f except tail and head*/
             num_escape_char_temp = protocal_info_ptr->length[0] - 2;
-
+            /*统计需要转义的个数*/
             while ((num_escape_char_temp--) > 1)
             {
                 if ((0xff == package_data[num_escape_char_temp])
@@ -1047,6 +1049,8 @@ U8 data_send(INT8 port_fd, scom_protocal *protocal_info_ptr,U8 *data_send_ptr, U
             package_data = NULL;
 
         }/*end for*/
+
+        /*将最后一个有可能长度不为DATA_LENGTH_MAX的子包单独处理*/
         if (data_send_length - count * DATA_LENGTH_MAX > 0)
         {
             protocal_info_ptr->length[0] = data_send_length
@@ -1156,10 +1160,14 @@ U8 data_send(INT8 port_fd, scom_protocal *protocal_info_ptr,U8 *data_send_ptr, U
             return TRUE;
         }/*end if*/
     }
-    else /*data_send_length <= DATA_LENGTH_MAX no subpackage*/
+    else /*data_send_length <= DATA_LENGTH_MAX  不需要分包的情况 直接发送 属性采用初始化时候默认的即可*/
     {
         /*set the length of tht protocal_info_ptr->length[0]*/
         protocal_info_ptr->length[0] = data_send_length + PROTOCAL_LENGTH;
+
+        /*注意这里需要对property重新避免上次分包修改protocal_info_ptr结构体
+        的数据对此次产生影响   因为结构体传递的是指针*/
+        protocal_info_ptr->property = PROPERTY_INIT;
 
         memcpy(protocal_info_ptr->package_data, data_send_ptr, data_send_length);
         /*malloc a mem to restore the packaged data*/
@@ -1371,18 +1379,8 @@ void *data_recv(recv_param *data_recv_info_ptr)
 
     }/*end while*/
 }/*end function*/
-/*************************************************
- * Function: tsk_thread_create()
- * Description:  create a thread for a tsk
- * Calls: main
- * Called By: pthread_create
- * Input: task
- * Output: error infomation
- * Return: TURE?FALSE
- * Author: xhniu
- * History: <author> <date>  <desc>
- * Others:
-************************************************/
+
+/*1判断消息列队是否生成如果没有则生成。2创建一个线程*/
 pthread_t tsk_thread_create(void *(*start_routine)(void *),void *arg)
 {
     INT8 ret = 0;
@@ -1391,7 +1389,7 @@ pthread_t tsk_thread_create(void *(*start_routine)(void *),void *arg)
     INT16 msg_que_id;
     key_t key;
     key = (key_t)MSG_QUE_KEY;
-    /*judge the msg que is exist*/
+    /*判断消息列队是否生成了 没有则生成 MSG_QUE_KEY键值由ftok得到*/
     msg_que_id = msgget(MSG_QUE_KEY, IPC_EXCL);
 #if 1
     printf("%4d\n", msg_que_id);
@@ -1431,22 +1429,12 @@ pthread_t tsk_thread_create(void *(*start_routine)(void *),void *arg)
 
     return thread_id;
 }
-/*************************************************
- * Function: tsk_thread_delete()
- * Description:  delete a thread
- * Calls: main
- * Called By: pthread_exit()
- * Input:
- * Output: none
- * Return:
- * Author: xhniu
- * History: <author> <date>  <desc>
- * Others: none
-************************************************/
+
+/*用来删除消息列队以及在列队中的所有数据*/
 U8 tsk_thread_delete(void)
 {
-    /*free the related system resource*/
     INT16 msg_que_id = 0;
+    /*由键值得到消息列队的ID*/
     msg_que_id = msgget(MSG_QUE_KEY, IPC_EXCL);
     if (msg_que_id < 0)
     {
@@ -1455,6 +1443,7 @@ U8 tsk_thread_delete(void)
     }
     else
     {
+        /*IPC_RMID用来删除消息列队以及在列队中的所有数据 立即生效*/
         if(msgctl(msg_que_id, IPC_RMID, 0) < 0)
         {
             printf("delete msg_que failed!\n");
@@ -1485,9 +1474,10 @@ int main()
     port_fd = open_port();//串口设备的文件描述符
     serialport_init(port_fd, 115200,8,'N', 1);//设置设备串口属性波特率停止位 数据位 校验位
     scom_protocal_init(&scom);  //  初始化串口协议结构体
-    rev_data.port_fd = port_fd;
 
-    MSG_QUE_KEY = ftok("./",5); // MSG_QUE_KEY是全局变量
+    rev_data.port_fd = port_fd; // 初始化接收数据结构体的port口
+
+    MSG_QUE_KEY = ftok("./",5); // MSG_QUE_KEY是全局变量 ftok第一个参数为项目名，第二个参数大于0即可
 
     tsk_thread_create((void *(*)(void *))data_recv, (void *)&rev_data);
     tsk_thread_create((void *(*)(void *))tsk_run, (void *)&port_fd);
