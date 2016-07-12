@@ -60,7 +60,7 @@ typedef signed int INT16;
 #define BAUDRATE 115200
 
 /*控制tsk_run和data_rev    while循环的运行当接受到数据exit字符串则为1，两函数退出循环*/
-U8 g_exit_flag = 0;
+volatile U8 g_exit_flag = 0;
 
 /*用于描述mes_que结构体的msg_type*/
 #define MSG_TYPE 17
@@ -390,6 +390,7 @@ U8 close_port(INT8 port_fd)
 void  *tsk_run(INT8 *param_ptr)
 {
     INT8 port_fd = *param_ptr;
+    /*这里要注意的是如果发送端发送数据结尾会加上一个\n则这里也要加上*/
     U8 *exit_ptr = "exit";
 #if DEBUG
     printf("in tsk_run,port_fd is %4d\n", port_fd);
@@ -536,6 +537,7 @@ void  *tsk_run(INT8 *param_ptr)
         }/*end if*/
   	/*获取取掉帧头帧尾数据帧的中的数据部分给data_ptr*/
         memcpy(data_ptr, &package_data_ptr[5], package_data_ptr[2] - PROTOCAL_LENGTH);
+        *(data_ptr+package_data_ptr[2] - PROTOCAL_LENGTH) = 0;
 	/*获取0-9位的属性*/
         property &= 0x3ff;
         switch (property)
@@ -880,7 +882,10 @@ U8 data_package(scom_protocal *protocal_info_ptr,
     /*free the ptr*/
     free(ptr);
     ptr = NULL;
- /*这里尤其要注意CRC得到的校验码应该由高位到低位，自左向右存放在数据包*/
+ /*这里尤其要注意CRC得到的校验码应该由高位到低位，自左向右存放在数据包
+    如果顺序放反则将导致接受端CRC校验失败  原因是如发送前的CRC是0xa211,如果
+    把低位0x11先存放如数组则package_data_ptr，则接受端在与CRC校验码校验时
+    最后的CRC值为0xa211 ^ 0x11a2 不等于0 */
     /*高位先放*/
     package_data_ptr[len + 6] = (U8)(check_code>>8);
     /*在放低位*/
@@ -1493,6 +1498,7 @@ int main()
     {
         printf("input command:\n");
         fgets(data, sizeof(data), stdin);
-        data_send(port_fd,&scom,data,my_strlen(data));
+        /*因为fgets读取会将最后的换行符也读入所以my_strlen(data) - 1*/
+        data_send(port_fd,&scom,data,my_strlen(data)-1);
     }
 }
