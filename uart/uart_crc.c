@@ -33,7 +33,7 @@ typedef unsigned int UINT16;
 typedef signed int INT16;
 
 /*用于决定是否运行调试代码*/
-#define DEBUG 1
+//#define DEBUG 1
 
 #define FALSE -1
 #define TRUE 0
@@ -42,7 +42,7 @@ typedef signed int INT16;
 #if 0
 #define DEV_PORT "/dev/pts/4"
 #else
-#define DEV_PORT "/dev/ttyS0"
+#define DEV_PORT "/dev/ttyUSB0"
 #endif
 
 /*数据属性初始化值*/
@@ -59,12 +59,12 @@ typedef signed int INT16;
 #define BUFFER_SIZE 72
 #define BAUDRATE 115200
 
-/*define the flag to cancel the thread*/
+/*控制tsk_run和data_rev    while循环的运行当接受到数据exit字符串则为1，两函数退出循环*/
 U8 g_exit_flag = 0;
 
 /*用于描述mes_que结构体的msg_type*/
 #define MSG_TYPE 17
-#define MSG_QUE_KEY 1024
+int MSG_QUE_KEY = 0;
 typedef struct
 {
     INT8 msg_type;
@@ -386,8 +386,7 @@ U8 close_port(INT8 port_fd)
 
 
 
-U8 data_send(INT8 port_fd, scom_protocal *protocal_info_ptr,U8 *data_send_ptr, U8 data_send_length);
-/*消息列队接收一帧接受解析的数据msg_que类型，并执行数据对应指令*/
+/*消息列队接收一帧接受解析的数据msg_que类型，并执行数据对应指令 参数为对应的串口端口*/
 void  *tsk_run(INT8 *param_ptr)
 {
     INT8 port_fd = *param_ptr;
@@ -757,6 +756,14 @@ U8 data_process(U8 *data_proc_ptr,  U8 data_start_pos, U8 data_end_pos)
             /*buffer反转义后的数据给package_data*/
 	    anti_escape_character(buffer, package_data,  (data_start_pos - pos + 1));
 
+#if DEBUG
+            U8 m = 0;
+            for (; m < 17; m++)
+            {
+                printf("%02x ", package_data[m]);
+            }
+            printf("\n");
+#endif
             /*data length exclude head and tail*/
 #if DEBUG
             printf("data length is: package[3] = %2d\n", package_data[3] - 2);
@@ -784,11 +791,9 @@ U8 data_process(U8 *data_proc_ptr,  U8 data_start_pos, U8 data_end_pos)
             msg_que_info.msg_type = MSG_TYPE;
             msg_que_info.msg_len = package_data_length;
 #if DEBUG
-            printf("msg_que_info.msg_len is %4d\n",
-                    msg_que_info.msg_len);
+            printf("msg_que_info.msg_len is %4d\n",msg_que_info.msg_len);
 #endif
-            memcpy(&(msg_que_info.msg_buf), &package_data[1],
-                    package_data_length);
+            memcpy(&(msg_que_info.msg_buf), &package_data[1],package_data_length);
             /*将msg_que结构体传递给消息列队 在tsk_run中处理*/
             ret = msgsnd(msg_que_id, &msg_que_info, package_data_length, IPC_NOWAIT);
             if (ret < 0)
@@ -869,14 +874,17 @@ U8 data_package(scom_protocal *protocal_info_ptr,
     U8 *ptr = malloc(sizeof(U8) * (data_length + 5));
     memcpy(ptr, package_data_ptr + 1, data_length + 5);
     check_code = crc16_check(ptr, data_length + 5,CRC_INIT);
+#if  DEBUG
+     printf("crc16_check is 0x%04x\n",check_code);
+#endif // DEBUG
     /*free the ptr*/
     free(ptr);
     ptr = NULL;
-
-    /*low 8 bit*/
-    package_data_ptr[len + 6] = (U8)(check_code);
-    /*high 8 bie*/
-    package_data_ptr[len + 7] = (U8)(check_code >> 8);
+ /*这里尤其要注意CRC得到的校验码应该由高位到低位，自左向右存放在数据包*/
+    /*高位先放*/
+    package_data_ptr[len + 6] = (U8)(check_code>>8);
+    /*在放低位*/
+    package_data_ptr[len + 7] = (U8)(check_code );
     package_data_ptr[len + 8] = protocal_info_ptr->tail[0];
 
     return TRUE;
@@ -1472,11 +1480,19 @@ int main()
 {
     char data[72] = "";
     scom_protocal scom; //定义协议结构
+    recv_param rev_data; //接受数据存放的结构体
     INT8  port_fd = 0;
     port_fd = open_port();//串口设备的文件描述符
     serialport_init(port_fd, 115200,8,'N', 1);//设置设备串口属性波特率停止位 数据位 校验位
     scom_protocal_init(&scom);  //  初始化串口协议结构体
-    printf("input command:\n");
-    fgets(data, sizeof(data), stdin);
-    data_send(port_fd,&scom,data,my_strlen(data));
+    rev_data.port_fd = port_fd;
+    MSG_QUE_KEY = ftok("./",5);
+    tsk_thread_create((void *(*)(void *))data_recv, (void *)&rev_data);
+     tsk_thread_create((void *(*)(void *))tsk_run, (void *)&port_fd);
+    while(1)
+    {
+        printf("input command:\n");
+        fgets(data, sizeof(data), stdin);
+        data_send(port_fd,&scom,data,my_strlen(data));
+    }
 }
