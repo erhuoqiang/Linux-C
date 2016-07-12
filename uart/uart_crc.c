@@ -1165,7 +1165,7 @@ U8 data_send(INT8 port_fd, scom_protocal *protocal_info_ptr,U8 *data_send_ptr, U
         /*set the length of tht protocal_info_ptr->length[0]*/
         protocal_info_ptr->length[0] = data_send_length + PROTOCAL_LENGTH;
 
-        /*注意这里需要对property重新避免上次分包修改protocal_info_ptr结构体
+        /*注意这里需要对property重新赋值 避免上次分包修改protocal_info_ptr结构体
         的数据对此次产生影响   因为结构体传递的是指针*/
         protocal_info_ptr->property = PROPERTY_INIT;
 
