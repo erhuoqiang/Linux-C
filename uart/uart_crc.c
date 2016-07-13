@@ -47,7 +47,9 @@ typedef signed int INT16;
 #define DEV_PORT "/dev/ttyUSB0"
 #endif
 
-/*数据属性初始化值*/
+/*数据属性初始化值   属性的13-15位如果为0 代表不分包 不为0 代表分包数，
+10-12位表示当前子包的ID号  6-9位是协议类型 4-5 代表通讯属性如设备的类
+型等2 - 3 代表 数据的加密类型  0-1是校验方式 CRC是01*/
 #define PROPERTY_INIT 0x11
 #define PROPERTY_0x01 0x51
 #define PROPERTY_0x02 0x91
@@ -60,7 +62,12 @@ typedef signed int INT16;
 也要改 一般为DATA_LENGTH_MAX 9倍*/
 #define DATA_LENGTH_MAX 8
 #define PROTOCAL_LENGTH 9  //scom_protocal结构体的除去数据长度后的协议长度
-#define BUFFER_SIZE 72  //接收端的缓存区大小 rev_data的BUF大小
+/*接收端的缓存区大小 也就是rev_data的BUF大小，大小最小应该大于等于
+(DATA_LENGTH_MAX +PROTOCAL_LENGTH)*2 -2 接受一帧数据最大的长度，
+这样才可以放的下一帧转义后的数据包，其长度是考虑到数据中的除了HEAD
+和TAIL其他的每个字符都需要转义成2两个字符  其长度最好是接受的数据帧最
+大长度的4-8倍左右 */
+#define BUFFER_SIZE 72
 #define BAUDRATE 115200
 
 /*控制tsk_run和data_rev   可以理解为对数据接受和处理的使能端  while循环
@@ -1165,9 +1172,9 @@ U8 data_send(INT8 port_fd, scom_protocal *protocal_info_ptr,U8 *data_send_ptr, U
         /*set the length of tht protocal_info_ptr->length[0]*/
         protocal_info_ptr->length[0] = data_send_length + PROTOCAL_LENGTH;
 
-        /*注意这里需要对property重新赋值 避免上次分包修改protocal_info_ptr结构体
-        的数据对此次产生影响   因为结构体传递的是指针*/
-        protocal_info_ptr->property = PROPERTY_INIT;
+        /*注意这里需要对property的10-15子包描述位清0 避免上次分包修改protocal_info_ptr结构体
+        属性成员的数据10-15位对此次产生影响   因为结构体传递的是指针*/
+        protocal_info_ptr->property &= 0x03ff;
 
         memcpy(protocal_info_ptr->package_data, data_send_ptr, data_send_length);
         /*malloc a mem to restore the packaged data*/
@@ -1282,18 +1289,11 @@ U8 data_send(INT8 port_fd, scom_protocal *protocal_info_ptr,U8 *data_send_ptr, U
 
     return TRUE;
 }
-/*************************************************
- * Function: data_recv()
- * Description:  the data and
- * Calls: none
- * Called By: none
- * Input: none
- * Output: none
- * Return:
- * Author: xhniu
- * History: <author> <date>  <desc>
- * Others: none
-************************************************/
+
+/*数据包接收读取串口设备文件来获取数据然后传递给data_process处理
+data_process 按帧格式接收处理 反转义后校验 然后传递给消息列队 在
+tsk_run中处理将子包整合然后根据数据内容做不同相应
+参数:data_recv_info_ptr 用来存放接收数据的缓存区 */
 void *data_recv(recv_param *data_recv_info_ptr)
 {
     INT8 port_fd = data_recv_info_ptr->port_fd;
@@ -1321,6 +1321,7 @@ void *data_recv(recv_param *data_recv_info_ptr)
 #if DEBUG
         printf("pos is %4dlen is %4d\n", pos, len);
 #endif
+        /* 从串口中读取数据*/
         len = read(port_fd, &data_recv_buf_ptr[pos], (BUFFER_SIZE - pos));
         printf("len is %4d\n", len);
         if (len > 0)
@@ -1336,13 +1337,19 @@ void *data_recv(recv_param *data_recv_info_ptr)
             continue;
         }/*end if*/
 
-        /* receiving data */
+        /* 如果接受到数据*/
         if ((0 == len) && (pos < BUFFER_SIZE) &&(1 == data_new_flag))
         {
             /*start to process data*/
 #if DEBUG
             printf("data_start_pos is%2d pos is %3d\n", data_start_pos, pos);
 #endif
+
+/*data_proces函数将data_recv_buf_ptr接受到的的数据包根据HEAD和TAIL格式分组，如
+果数据包的数据包含3.5组，则将前三组反转义，然后CRC校验（对数据帧去HEAD和TAIL后校
+验），最后根据数据和长度构成mes_que结构体传递给消息列队在tsk_run中进一步处理。剩
+下的0.5则返回0.5组HEAD的位置返回给 data_proc_pos，下次接受完整后在传入处理。
+如果刚好是整数组则直接返回数据结束位置*/
             data_proc_pos = data_process(data_recv_buf_ptr, data_start_pos, pos);
             if (data_proc_pos > 0)
             {
@@ -1360,6 +1367,8 @@ void *data_recv(recv_param *data_recv_info_ptr)
             data_new_flag = 0;
         }
 
+        /*如果到达了缓存区末尾则将还没有处理完的数据拷贝到缓存区开头  这里改成循环列队的结构
+        效率会高一些*/
         if (BUFFER_SIZE == pos)
         {
 #if DEBUG
@@ -1477,14 +1486,16 @@ int main()
 
     rev_data.port_fd = port_fd; // 初始化接收数据结构体的port口
 
-    MSG_QUE_KEY = ftok("./",5); // MSG_QUE_KEY是全局变量 ftok第一个参数为项目名，第二个参数大于0即可
+    MSG_QUE_KEY = ftok("./",6); // MSG_QUE_KEY是全局变量 ftok第一个参数为项目名，第二个参数大于0即可
 
     tsk_thread_create((void *(*)(void *))data_recv, (void *)&rev_data);
     tsk_thread_create((void *(*)(void *))tsk_run, (void *)&port_fd);
     while(!g_exit_flag )
     {
         printf("input command:\n");
-        fgets(data, sizeof(data), stdin);
+        /*fgets 读一行数据如果数据超过了data数据的大小则会读sizeof data -1 最后一位会给'\0'*/
+        fgets(data, sizeof(data) , stdin);
+        scom.property = PROPERTY_INIT;  //这里根据数据类型来修改属性   10-15子包描述位留给data_Send函数自己填写
         /*因为fgets读取会将最后的换行符也读入所以my_strlen(data) - 1*/
         data_send(port_fd,&scom,data,my_strlen(data)-1);
     }
