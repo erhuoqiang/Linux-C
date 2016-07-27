@@ -24,10 +24,11 @@ struct item_info
 class BasePage
 {
 public:
-    BasePage();
+    BasePage(string);
     MenuItem* m_items[10];
 
     int item_count;//item counts in this page
+    string page_name;
 
     void ShowPage(BasePage*);
     void AddItem(MenuItem* a);
@@ -35,7 +36,6 @@ public:
 private:
 
     int page_index;//page index
-
     void PageSetIndex(int);
     void ClearOneItem();
     void ClearAllItems();

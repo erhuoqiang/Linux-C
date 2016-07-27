@@ -25,10 +25,10 @@ BasePage* cur_page = NULL;
 BasePage* back_page = NULL;
 MenuItem* current_item;
 
-BasePage page1;
-BasePage page2;
-BasePage page3;
-BasePage page4;
+BasePage page1("Index Page");
+BasePage page2("Panel Setting");
+BasePage page3("Picture Setting");
+BasePage page4("Sound Setting");
 
 MenuItem item1 = MenuItem("01 Panel Setting",1,5,1,1,&page2,NULL,&page1);
 MenuItem item2 = MenuItem("02 Picture Setting",2,5,1,2,&page3,NULL,&page1);
@@ -79,6 +79,8 @@ void ShowPage(BasePage* page)
 
     int j;
     clear();
+
+    mvaddstr(0,15,(page->page_name).c_str());
 
     for(j=0;j<page->item_count;j++)
     {

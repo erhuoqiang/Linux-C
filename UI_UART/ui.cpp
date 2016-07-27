@@ -63,8 +63,9 @@ void MenuItem::ShowItem(MenuItem* m_item)
 
 
 /***basepage construct func***/
-BasePage::BasePage()
+BasePage::BasePage(string str)
 {
+    page_name = str;
     item_count = 0;
     page_index = 0;
 }
