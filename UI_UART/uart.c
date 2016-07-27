@@ -15,7 +15,9 @@ U16 CRC16_Check(U8* data, int num, int crc)
     int i = 0;
     if(data == NULL || num < 0)
     {
+#ifdef DEBUG
         printf("crc16_check parameter error! \n");
+#endif
         return -1;
     }
 
@@ -43,13 +45,17 @@ void Data_Protocal_Package(Data_Protocal * package, U8 property, INT8 *buf, U8 d
 {
     if(package == NULL || buf == NULL || data_length == 0)
     {
+#ifdef DEBUG
         printf("Input error!\n");
+#endif
         return;
     }
 
     if(data_length > MAX_DATA_LENGTH)
     {
+#ifdef DEBUG 
         printf("Data is too long, Please consider subpackage.\n");
+#endif
         return;
     }
     package->head[0] = HEAD;
@@ -72,7 +78,9 @@ INT8 Escape_Character(U8 *package_buf, U8 package_length, U8 *buf)
 {
 	if(NULL == package_buf || 0 == package_length)
 	{
+#ifdef DEBUG
 		printf("Input error!\n");
+#endif
 		return -1;
 	}
 
@@ -117,7 +125,9 @@ int Send_data(INT8 port,Data_Protocal * package)
 
     if(package == NULL)
     {
+#ifdef DEBUG
         printf("Input error!\n");
+#endif
         return -1;
     }
     /*统计需要转移字符的个数*/
@@ -155,7 +165,9 @@ int Send_data(INT8 port,Data_Protocal * package)
 
         if( write(port, send_buf,package->length[0] + escape_count) == -1)
         {
+#ifdef DEBUG
             printf("Send data failed!\n");
+#endif
             free(send_buf);
             free(package_buf);
             return -1;
@@ -175,7 +187,9 @@ int Send_data(INT8 port,Data_Protocal * package)
 #endif
         if( write(port, package_buf,package->length[0]) == -1)
         {
+#ifdef DEBUG
             printf("Send data failed!\n");
+#endif
             free(send_buf);
             free(package_buf);
             return -1;
@@ -198,9 +212,11 @@ INT8 Reverse_Escape_Character(U8 *rev_buf, U8 *data_package)
 
     if (NULL == data_package|| NULL == rev_buf)
     {
-		printf("Input error!\n");
-		return -1;
-	}
+#ifdef DEBUG
+	printf("Input error!\n");
+#endif 
+	return -1;
+    }
 
     data_package[0] = rev_buf[0];
     data_package++;
@@ -294,7 +310,9 @@ int Rev_Process(U8 * rev_buf, int data_start_pos, int data_end_pos)
                 err = msgsnd(MSG_QUE_ID, (void *)&msg_buf, sizeof(msg_buf) - sizeof(long), IPC_NOWAIT);
                 if(err < 0)
                {
+#ifdef DEBUG
                    printf("Mssage queue send data failed!\n");
+#endif
                }
                else
                {
@@ -306,7 +324,9 @@ int Rev_Process(U8 * rev_buf, int data_start_pos, int data_end_pos)
             }
             else
             {
+#ifdef DEBUG
                 printf("crc check is failed!\n");
+#endif
             }
             head_flag = 0;
             tail_flag = 0;
@@ -485,8 +505,9 @@ U8 Serial_Init(INT8 port_fd, U32 baud_rate, U8 data_bits, U8 parity, U8 stop_bit
         perror("serial port set error!!!\n");
         return -1;
     }
-
+#ifdef DEBUG
     printf("Port %d init success!\n",port_fd);
+#endif
     return 0;
 }
 
@@ -498,7 +519,9 @@ INT8 Read_MSG_QUE()
     err = msgrcv(MSG_QUE_ID, (void *)&msg_buf,  sizeof(msg_buf) - sizeof(long),0, 0);
     if(err <= 0)
     {
+#ifdef DEBUG
 	printf("Mssage queue rev data failed!\n");
+#endif
     }
     else
     {
