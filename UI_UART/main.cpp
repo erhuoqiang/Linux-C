@@ -139,46 +139,49 @@ void rightchecktype()
     }
 }
 
-void leftchecktype(int type)
+void leftchecktype()
 {
+    int current_type;
     stringstream stream;
 
-    if(in_flag==true)
+    current_type = current_item->item_type;
+    switch(current_type)
     {
-        switch(type)
-        {
-            case 1://switchitem
-
-                if(current_item->switching_state==true)
-                {
-                    current_item->switching_state = false;
-                    current_item->text_tail = "FALSE";
-                    mvaddstr(current_item->pos_x,current_item->pos_y+30,(current_item->text_tail).c_str());
-                }
-                else
-                {
-                    current_item->switching_state = true;
-                    current_item->text_tail = "TRUE ";
-                    mvaddstr(current_item->pos_x,current_item->pos_y+30,(current_item->text_tail).c_str());
-                }
-                break;
-            case 2://numericaltiem
-                if(current_item->set_num > current_item->min_num)
-                {
-                    current_item->set_num -= 1;
-                    stream << (current_item->set_num);
-                    stream >> (current_item->text_tail);
-                    mvaddstr(current_item->pos_x,current_item->pos_y+30,"     ");
-                    mvaddstr(current_item->pos_x,current_item->pos_y+30,(current_item->text_tail).c_str());
-                }
-                break;
-            case 3://enteritem
-                in_flag = false;
-                item_pos = 1;
-                cur_page = current_item->nextpage;
-                ShowPage(cur_page);
-                break;
-        }
+        case 1://switchitem
+            in_flag = true;
+            if(current_item->switching_state==true)
+            {
+                current_item->switching_state = false;
+                current_item->text_tail = "FALSE";
+                mvaddstr(current_item->pos_x,current_item->pos_y+30,(current_item->text_tail).c_str());
+            }
+            else
+            {
+                current_item->switching_state = true;
+                current_item->text_tail = "TRUE ";
+                mvaddstr(current_item->pos_x,current_item->pos_y+30,(current_item->text_tail).c_str());
+            }
+            break;
+        case 2://numericaltiem
+            in_flag = true;
+            if(current_item->set_num > current_item->min_num)
+            {
+                current_item->set_num -= 1;
+                stream << (current_item->set_num);
+                stream >> (current_item->text_tail);
+                mvaddstr(current_item->pos_x,current_item->pos_y+30,"     ");
+                mvaddstr(current_item->pos_x,current_item->pos_y+30,(current_item->text_tail).c_str());
+            }
+            break;
+        case 3://enteritem
+        /****
+            in_flag = false;
+            item_pos = 1;
+            cur_page = current_item->nextpage;
+            ShowPage(cur_page);
+            break;
+        ******/
+            break;
     }
 
 }
@@ -255,7 +258,7 @@ void recvprocess(int recv,int recv_flag)
                 mvaddch(item_pos,0,'*');
             break;
         case RECV_LEFT:
-            leftchecktype(cur_type);
+            leftchecktype();
             break;
         case RECV_RIGHT:
             rightchecktype();
@@ -301,7 +304,7 @@ void recvprocess(int recv,int recv_flag)
                 mvaddch(item_pos,0,'*');
             break;
         case KEY_LEFT:
-            leftchecktype(cur_type);
+            leftchecktype();
             break;
         case KEY_RIGHT:
             rightchecktype();
@@ -345,7 +348,7 @@ void read_msg()
 int main()
 {
      int rec;
-     
+
 /****************************uart.c*****************************/
      INT8  port_fd = 0;
      msg_que msg_buf;
@@ -359,9 +362,9 @@ int main()
 
      Create_MSG_QUE("./Makefile",2);  //Create message queue
 /******/
-	screen_init();
-        Menu_init();
-        init_startpage();
+     screen_init();
+     Menu_init();
+     init_startpage();
 /******/
      err = pthread_create(&rev_pthid, NULL,(void *(*)(void *))Data_Rev, (void *)&rev_param);
      if(err != 0 )
