@@ -1,15 +1,102 @@
-#include"uart.h"
+#include<stdlib.h>
+#include<stdio.h>
+#include<fcntl.h>          /*File control 文件控制*/
+#include<unistd.h>
+#include<string.h>
+#include<termio.h>         /*配置串口的接口函数*/
+#include<sys/types.h>
+#include<sys/stat.h>
+
+#include<pthread.h>
+#include<sys/ipc.h>
+#include<sys/msg.h>
+#include<time.h>
+
+#define TURE 0
+#define FALSE -1
+
+
+#if 0
+#define DEBUG
+#endif
+
+#if 1
+#define RESULT
+#endif
+
+typedef unsigned char U8;
+typedef char INT8;
+typedef unsigned int U32;
+typedef int INT32;
+typedef unsigned short int U16;
+typedef short int INT16;
+
+/*如果传输的数据是ASCII 码表内 则数据的范围在0-0x7F内
+则标志符可以采用0x80-0xFF的范围来表示  这样就不会出现
+数据中出现和标志符一样的情况 如果数据的范围不确定则 为了
+避免数据中出现标志符情况可以引入转义字符 如数据中出现0XF4
+则将其转化为0XFF 0X01两个字符去发送，接收端受到转义字符则
+将其还原 escape_character函数就是实现这个功能的*/
+#define HEAD 0xf4     //头标志
+#define TAIL 0x4f    //尾标志
+#define ESC 0xff   //转义字符
+#define ESC_HEAD  0x01 //HEAD 转义成ESC + ESC_HEAD
+#define ESC_ESC  0x02  //ESC 转义成ESC + ESC_ESC
+#define ESC_TAIL 0x03  //TAIL 转义成ESC + ESC_TAIL
+
+#define MAX_DATA_LENGTH 249  //255 - PROTOCAL_LENGTH
+#define PROTOCAL_LENGTH 6
+/*串口协议帧*/
+typedef struct
+{
+	U8 head[1];
+	U8 length[1];  /*length = 一帧数据的长度 =  协议长度+数据长度*/
+	U8 property[1];
+	U8 data[MAX_DATA_LENGTH];
+	U16 crc_fsc;
+	U8 tail[1];
+}Data_Protocal;
+
+#define REV_BUFFER_SIZE 96
+/*REV_BUFFER*/
+typedef struct
+{
+    INT8 port_id;
+    U8 buf[REV_BUFFER_SIZE];
+}rev_pthread_param;
+
+/*msg struct*/
+typedef struct
+{
+    long msg_type;  //msg struct first member must be long type
+    //INT8 data_len;   //consider data kind changge
+    INT8 data[1];
+}msg_que;
 
 volatile int MSG_QUE_KEY = 0; //KEY VALUE
 volatile int MSG_QUE_ID = 0;  //msg_id
 
+U16 CRC16_Check(U8* data, int num, int crc);
+INT8 Open_Port(const char * DEV);
+INT8 Close_Port(INT8 port_fd);
+U8 Serial_Init(INT8 port_fd, U32 baud_rate, U8 data_bits, U8 parity, U8 stop_bit);
+int My_Strlen(const char * src);
+void Data_Protocal_Package(Data_Protocal * package, U8 property, INT8 *buf, U8 data_length);
+int Send_data(INT8 port,Data_Protocal * package);
+INT8 Escape_Character(U8 *package_buf, U8 package_length, U8 *buf);
+INT8 Reverse_Escape_Character(U8 *rev_buf, U8 *data_package);
+int Rev_Process(U8 * rev_buf, int data_start_pos, int data_end_pos);
+void Data_Rev(rev_pthread_param * rev_param);
+void Create_MSG_QUE(const char * path, int num);
+INT8 Read_MSG_QUE();
 /*
 CRC校验函数 根据自己原本根据书本思路写的改进crc赋初始值是为了考虑开头数据多了很多0
 并不影响CRC生成校验值的结果这种情况，提高效率的地方是crc = crc ^ (*addr++ << 8);
 这里是根据^位与同组值异或的顺序不同不影响结果的原理写的
 参数：addr是数据数组首地址，num是数据长度，crc是crc的初始值
 */
-
+#define CRC_INIT   0xFFFF
+#define POLY 0x1021 // 这里省略了一个1 相当于多项式POLY为0x11021
 U16 CRC16_Check(U8* data, int num, int crc)
 {
     int i = 0;
@@ -38,7 +125,11 @@ U16 CRC16_Check(U8* data, int num, int crc)
 }
 
 /*********************Send Part***********************/
-
+#define DEV_PORT1 "/dev/ttyS1"
+/*PROPERTY TYPE*/
+#define PROPERTY_CMD 0x01
+#define PROPERTY_DATA 0x02
+#define PROPERTY_OTHER 0x03
 void Data_Protocal_Package(Data_Protocal * package, U8 property, INT8 *buf, U8 data_length)
 {
     if(package == NULL || buf == NULL || data_length == 0)
@@ -378,7 +469,7 @@ void Data_Rev(rev_pthread_param * rev_param)
     }
 
 }
-
+#define DEV_PORT0  "/dev/ttyS0"
 
 /*打开串口号 将其设置为堵塞状态*/
 INT8 Open_Port(const char * DEV)
@@ -490,7 +581,18 @@ U8 Serial_Init(INT8 port_fd, U32 baud_rate, U8 data_bits, U8 parity, U8 stop_bit
     return 0;
 }
 
-/*READ data from message queue*/
+
+
+/*strlen by myself*/
+int My_Strlen(const char * src)
+{
+    const char * temp = src;
+    if(src == NULL)
+        return -1;
+    while(*src++);
+    return src - temp - 1;
+}
+
 INT8 Read_MSG_QUE()
 {
     msg_que msg_buf;
@@ -507,10 +609,8 @@ INT8 Read_MSG_QUE()
 	printf("REV MSG_TYPE is :%ld\n DATA is:%d\n", msg_buf.msg_type, msg_buf.data[0]);
 #endif
     }
-    return msg_buf.data[0];
 }
 
-/*Create Message queue  param path,num is give to  ftok function*/
 void Create_MSG_QUE(const char * path, int num)
 {
      MSG_QUE_KEY = ftok(path,num);
@@ -535,14 +635,29 @@ void Create_MSG_QUE(const char * path, int num)
           printf("Create Message Queue is exit. ID is: %d!\n",MSG_QUE_ID);
      }
 }
-
-/*strlen by myself*/
-int My_Strlen(const char * src)
+int main(int argc, char **argv)
 {
-    const char * temp = src;
-    if(src == NULL)
-        return -1;
-    while(*src++);
-    return src - temp - 1;
-}
+     INT8  port_fd = 0;
+     msg_que msg_buf;
+     int err = 0;
+     rev_pthread_param rev_param;
+     pthread_t rev_pthid,read_msg_pthid; //pthread;
 
+     port_fd = Open_Port(DEV_PORT0);
+     Serial_Init(port_fd, 115200, 8, 'N', 1);
+     rev_param.port_id = port_fd;// Init port_id
+
+     Create_MSG_QUE("./term.c",6);  //Create message queue attention  the path
+     err = pthread_create(&rev_pthid, NULL,(void *(*)(void *))Data_Rev, (void *)&rev_param);
+     if(err != 0 )
+        printf("Create Data_Rev pthread error!\n");
+     else
+        printf("Create Data_Rev pthread success!\n");
+     err = pthread_create(&read_msg_pthid, NULL,(void *(*)(void *))Read_MSG_QUE, (void *)NULL);
+     if(err != 0 )
+        printf("Create Read_MSG_QUE pthread error!\n");
+     else
+        printf("Create Read_MSG_QUE pthread success!\n");
+     while(1);
+
+}

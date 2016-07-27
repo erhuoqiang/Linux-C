@@ -27,7 +27,7 @@ typedef short int INT16;
 #define DEBUG
 #endif
 
-#if 0
+#if 1
 #define RESULT
 #endif
 

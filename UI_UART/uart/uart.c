@@ -507,7 +507,6 @@ INT8 Read_MSG_QUE()
 	printf("REV MSG_TYPE is :%ld\n DATA is:%d\n", msg_buf.msg_type, msg_buf.data[0]);
 #endif
     }
-    return msg_buf.data[0];
 }
 
 /*Create Message queue  param path,num is give to  ftok function*/
