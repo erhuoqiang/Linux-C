@@ -40,22 +40,18 @@ U16 CRC16_Check(U8* data, int num, int crc)
 }
 
 /*********************Send Part***********************/
-
+/*参数package是数据格式帧 property是属性 buf是要发送的数据 data_length是数据长度*/
 void Data_Protocal_Package(Data_Protocal * package, U8 property, INT8 *buf, U8 data_length)
 {
     if(package == NULL || buf == NULL || data_length == 0)
     {
-#ifdef DEBUG
         printf("Input error!\n");
-#endif
         return;
     }
 
     if(data_length > MAX_DATA_LENGTH)
     {
-#ifdef DEBUG 
         printf("Data is too long, Please consider subpackage.\n");
-#endif
         return;
     }
     package->head[0] = HEAD;
@@ -64,10 +60,9 @@ void Data_Protocal_Package(Data_Protocal * package, U8 property, INT8 *buf, U8 d
 
     memcpy(package->data, buf, data_length);
 
-    package->crc_fsc = CRC16_Check((U8 *)package + 1,data_length + 3,CRC_INIT);
-#ifdef DEBUG
+    package->crc_fsc = CRC16_Check((U8 *)package + 1,data_length + 2,CRC_INIT);
     printf("CRC is %d\n",package->crc_fsc);
-#endif
+
     package->tail[0] = TAIL;
 }
 
@@ -116,7 +111,7 @@ INT8 Escape_Character(U8 *package_buf, U8 package_length, U8 *buf)
 	return 0;
 }
 
-
+/*port是发送端口的文件描述符，package是要发送的数据格式包*/
 int Send_data(INT8 port,Data_Protocal * package)
 {
     int i = 0, escape_count = 0, len = 0;
@@ -198,11 +193,12 @@ int Send_data(INT8 port,Data_Protocal * package)
         printf("Send data success!\n");
 #endif
     }
-
+    free(send_buf);
+    free(package_buf);
     return 0;
 }
 
-/*****************REV PART********************/
+/********************REV PART***********************/
 
 /*反转义 HEAD<-ESC 0X01 TAIL<-ESC 0X03 ESC<-ESC 0X02
 rev_buf是接收到还没有解析的数据，data_package是解析后数据存放的数组*/
@@ -214,7 +210,7 @@ INT8 Reverse_Escape_Character(U8 *rev_buf, U8 *data_package)
     {
 #ifdef DEBUG
 	printf("Input error!\n");
-#endif 
+#endif
 	return -1;
     }
 
@@ -258,6 +254,9 @@ INT8 Reverse_Escape_Character(U8 *rev_buf, U8 *data_package)
     return 0;
 }
 
+/*rev_buf是接受到数据的缓存 可能是3.5组的数据，data_start_pos是数据起始的位置
+data_end_pos是数据结束的位置 Rev_process函数的功能则是将收到的3.5数组中的3个
+完整组解析，返回剩余0.5组 数据的起始位置*/
 int Rev_Process(U8 * rev_buf, int data_start_pos, int data_end_pos)
 {
     int i = 0;
@@ -303,6 +302,7 @@ int Rev_Process(U8 * rev_buf, int data_start_pos, int data_end_pos)
 #ifdef RESULT
                 printf("Property is :%d\n Key is:%d\n", package[2], package[3]);
 #endif
+/**********************如果改了数据发送长度 这里需要修改*****************/
                 msg_buf.msg_type = package[2];
                 msg_buf.data[0]  =  package[3];
                 //MSG_QUE_ID = msgget(MSG_QUE_KEY,IPC_EXCL);
@@ -345,6 +345,7 @@ int Rev_Process(U8 * rev_buf, int data_start_pos, int data_end_pos)
     return pos;
 }
 
+/*数据接受函数，rev_param参数一个结构体 是传递用来存放数据缓存的内存，和读取串口的文件描述符号*/
 void Data_Rev(rev_pthread_param * rev_param)
 {
     U8 rev_buf[512];

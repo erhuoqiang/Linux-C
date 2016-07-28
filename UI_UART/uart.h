@@ -88,19 +88,28 @@ extern volatile int MSG_QUE_ID;  //msg_id
 extern "C"
 {
 #endif
-extern U16 CRC16_Check(U8* data, int num, int crc);
+/*串口配置*/
 extern INT8 Open_Port(const char * DEV);
 extern INT8 Close_Port(INT8 port_fd);
 extern U8 Serial_Init(INT8 port_fd, U32 baud_rate, U8 data_bits, U8 parity, U8 stop_bit);
-extern int My_Strlen(const char * src);
+/*协议相关*/
 extern void Data_Protocal_Package(Data_Protocal * package, U8 property, INT8 *buf, U8 data_length);
-extern int Send_data(INT8 port,Data_Protocal * package);
+extern U16 CRC16_Check(U8* data, int num, int crc);
 extern INT8 Escape_Character(U8 *package_buf, U8 package_length, U8 *buf);
 extern INT8 Reverse_Escape_Character(U8 *rev_buf, U8 *data_package);
 extern int Rev_Process(U8 * rev_buf, int data_start_pos, int data_end_pos);
+
+/*接受和发送*/
 extern void Data_Rev(rev_pthread_param * rev_param);
+extern int Send_data(INT8 port,Data_Protocal * package);
+
+/*消息队列*/
 extern void Create_MSG_QUE(const char * path, int num);
 extern INT8 Read_MSG_QUE();
+
+extern int My_Strlen(const char * src);
+
+
 #ifdef __cplusplus
 }
 #endif

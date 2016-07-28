@@ -99,6 +99,7 @@ U16 CRC16_Check(U8* data, int num, int crc)
 #define PROPERTY_CMD 0x01
 #define PROPERTY_DATA 0x02
 #define PROPERTY_OTHER 0x03
+/*参数package是数据格式帧 property是属性 buf是要发送的数据 data_length是数据长度*/
 void Data_Protocal_Package(Data_Protocal * package, U8 property, INT8 *buf, U8 data_length)
 {
     if(package == NULL || buf == NULL || data_length == 0)
@@ -420,6 +421,7 @@ int My_Strlen(const char * src)
     return src - temp - 1;
 }
 
+/*from baidu*/
 int kbhit(void)
 {
     struct termios oldt, newt;
@@ -448,13 +450,14 @@ int kbhit(void)
 #define RIGHT 67
 #define BACK 32
 #define MENU 109
- 
+
 int main(int argc, char **argv)
 {
      INT8  port_fd = 0;
      Data_Protocal package;
      char str[100] = "";
      port_fd = Open_Port(DEV_PORT1);
+     Serial_Init(port_fd, 115200, 8, 'N', 1);
      printf("Input 'q' is quit this program\n");
      while(1)
      {
@@ -474,8 +477,8 @@ int main(int argc, char **argv)
 		case RIGHT: printf("\nRIGHT\n");break;
 		case BACK: printf("\nBACK\n");break;
 		case MENU: printf("\nMENU\n");break;
-		default: printf("\nOTHER\n");break;	
-	     } 
+		default: printf("\nOTHER\n");break;
+	     }
 	     fflush(stdout);
 	    str[1] = 0;
             Data_Protocal_Package(&package, PROPERTY_CMD, str, My_Strlen(str));
